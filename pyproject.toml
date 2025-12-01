@@ -12,6 +12,6 @@ dependencies = [
     "tinydb>=4.8.2",
     "uvicorn>=0.35.0",
     "veris-cli>=1.5.1",
-    "veris-ai[agents,fastapi]>=1.12.2",
+    "veris-ai[agents,fastapi]>=1.20.0",
     "tool>=0.8.0",
 ]

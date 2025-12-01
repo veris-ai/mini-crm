@@ -2,6 +2,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from agents import RunContextWrapper, function_tool
 from tinydb import Query
+from veris_ai import veris
 
 from .db import db
 from .schema import CRMRunContext
@@ -19,6 +20,7 @@ def _get_lead_by_id(lead_id: int) -> Optional[Dict[str, Any]]:
 
 
 @function_tool
+@veris.mock()
 def lookup_lead(ctx: RunContextWrapper[CRMRunContext], query: str) -> Optional[Dict[str, Any]]:
     """Find best single lead whose name or contact contains the query (case-insensitive).
 
@@ -50,6 +52,7 @@ def lookup_lead(ctx: RunContextWrapper[CRMRunContext], query: str) -> Optional[D
 
 
 @function_tool
+@veris.mock()
 def write_lead_update(
     ctx: RunContextWrapper[CRMRunContext],
     lead_id: int,
@@ -93,6 +96,7 @@ def write_lead_update(
 
 
 @function_tool
+@veris.mock()
 def get_leads(ctx: RunContextWrapper[CRMRunContext], keyword: str) -> List[Dict[str, Any]]:
     """Return all leads where name|contact|industry|status contains keyword (case-insensitive)."""
 
@@ -116,6 +120,7 @@ def get_leads(ctx: RunContextWrapper[CRMRunContext], keyword: str) -> List[Dict[
 
 
 @function_tool
+@veris.mock()
 def score_lead_industry(ctx: RunContextWrapper[CRMRunContext], industry: str) -> int:
     """Return a simple heuristic score for an industry.
 

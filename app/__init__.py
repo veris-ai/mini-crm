@@ -3,8 +3,7 @@
 import json
 from typing import Dict, Any, List
 
-from agents import RunContextWrapper, TResponseInputItem
-from veris_ai import Runner as VerisRunner, VerisConfig, ToolCallOptions
+from agents import RunContextWrapper, TResponseInputItem, Runner
 
 from .schema import CRMRunContext
 from .agent import agent as crm_agent
@@ -27,18 +26,10 @@ class CRMChatService:
         self.input_items.append({"content": message, "role": "user"})
 
         # Run with full history so the agent has context
-        result = await VerisRunner.run(
+        result = await Runner.run(
             starting_agent=crm_agent,
             input=self.input_items,
             context=self.ctx.context,
-            veris_config=VerisConfig(
-                tool_options={
-                    "score_lead_industry": ToolCallOptions(response_expectation="none"),
-                    "get_leads": ToolCallOptions(response_expectation="none"),
-                    "lookup_lead": ToolCallOptions(response_expectation="none"),
-                    "write_lead_update": ToolCallOptions(response_expectation="none"),
-                }
-            ),
         )
 
         # Refresh canonical history to include assistant/model outputs
