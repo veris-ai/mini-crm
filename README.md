@@ -8,8 +8,8 @@ Prerequisites: Python ≥3.11, OpenAI key, Veris key, ngrok (authtoken configure
 
 ### 1) Clone and change dir
 ```bash
-git clone https://github.com/veris-ai/mini_crm.git
-cd mini_crm
+git clone https://github.com/veris-ai/mini-crm.git
+cd mini-crm
 ```
 
 ### 2) Download dependencies
@@ -50,7 +50,7 @@ The setup command launches the FastAPI server and makes it publicly accessible v
 Open a new terminal, then:
 
 ```bash
-cd mini_crm
+cd mini-crm
 source .venv/bin/activate
 ```
 
