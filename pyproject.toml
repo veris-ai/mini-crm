@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.116.1",
-    "openai-agents>=0.3.0",
+    "openai-agents[litellm]>=0.3.0",
     "pydantic>=2.11.9",
     "python-dotenv>=1.1.1",
     "tinydb>=4.8.2",

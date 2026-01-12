@@ -3,10 +3,10 @@
 import json
 from typing import Dict, Any, List
 
-from agents import RunContextWrapper, TResponseInputItem, Runner
+from agents import RunContextWrapper, TResponseInputItem, Runner, RunConfig
 
 from .schema import CRMRunContext
-from .agent import agent as crm_agent
+from .agent import agent as crm_agent, model_provider
 
 
 class CRMChatService:
@@ -26,10 +26,12 @@ class CRMChatService:
         self.input_items.append({"content": message, "role": "user"})
 
         # Run with full history so the agent has context
+        # Using model_provider for multi-provider LLM support
         result = await Runner.run(
             starting_agent=crm_agent,
             input=self.input_items,
             context=self.ctx.context,
+            run_config=RunConfig(model_provider=model_provider),
         )
 
         # Refresh canonical history to include assistant/model outputs
