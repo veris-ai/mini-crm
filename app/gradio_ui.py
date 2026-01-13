@@ -204,7 +204,7 @@ def get_required_key_for_model(model_choice: str) -> str:
 def build_ui() -> gr.Blocks:
     """Build the Gradio UI."""
 
-    with gr.Blocks(title="Mini CRM Agent", theme=gr.themes.Soft()) as demo:
+    with gr.Blocks(title="Mini CRM Agent") as demo:
         gr.Markdown("# Mini CRM Lead Qualifier Agent")
         gr.Markdown("Chat with a sales assistant powered by your choice of frontier LLM.")
 
@@ -297,7 +297,6 @@ def build_ui() -> gr.Blocks:
                 chatbot = gr.Chatbot(
                     label="Chat",
                     height=500,
-                    type="messages",
                 )
 
                 with gr.Row():
@@ -389,10 +388,7 @@ def build_ui() -> gr.Blocks:
             except Exception as e:
                 response = f"Error: {str(e)}"
 
-            history = history + [
-                {"role": "user", "content": message},
-                {"role": "assistant", "content": response},
-            ]
+            history = history + [(message, response)]
 
             audio_path = None
             if voice_enabled and not response.startswith("Error:"):
@@ -423,7 +419,7 @@ def build_ui() -> gr.Blocks:
             # Transcribe
             transcription = transcribe_audio(audio_path, openai_key_val)
             if transcription.startswith("[Error"):
-                history = history + [{"role": "assistant", "content": transcription}]
+                history = history + [(None, transcription)]
                 return history, None
 
             model_name, _ = MODELS.get(model_choice, ("gpt-4o", "openai"))
@@ -433,10 +429,7 @@ def build_ui() -> gr.Blocks:
             except Exception as e:
                 response = f"Error: {str(e)}"
 
-            history = history + [
-                {"role": "user", "content": f"[Voice] {transcription}"},
-                {"role": "assistant", "content": response},
-            ]
+            history = history + [(f"[Voice] {transcription}", response)]
 
             audio_response = None
             if not response.startswith("Error:"):
@@ -456,7 +449,7 @@ def build_ui() -> gr.Blocks:
 def main():
     """Launch the Gradio UI."""
     demo = build_ui()
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    demo.launch(server_name="0.0.0.0", server_port=7860, theme=gr.themes.Soft())
 
 
 if __name__ == "__main__":
