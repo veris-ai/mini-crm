@@ -2,6 +2,7 @@
 
 Features:
 - Model selection (OpenAI, Anthropic, Google, Mistral, DeepSeek)
+- User-provided API keys via UI
 - Ngrok MCP URL generation
 - Voice mode with ElevenLabs TTS and Whisper STT
 """
@@ -9,7 +10,6 @@ Features:
 import os
 import tempfile
 import uuid
-from typing import Generator
 
 import gradio as gr
 from dotenv import load_dotenv
@@ -25,16 +25,25 @@ from .schema import CRMRunContext
 
 load_dotenv()
 
-# Available frontier models
+# Available frontier models grouped by provider
 MODELS = {
-    "GPT-4o (OpenAI)": "gpt-4o",
-    "GPT-4.1 (OpenAI)": "gpt-4.1",
-    "Claude Sonnet 4 (Anthropic)": "litellm/anthropic/claude-sonnet-4-20250514",
-    "Claude Opus 4 (Anthropic)": "litellm/anthropic/claude-opus-4-0-20250514",
-    "Gemini 2.0 Flash (Google)": "litellm/gemini/gemini-2.0-flash",
-    "Gemini 2.5 Pro (Google)": "litellm/gemini/gemini-2.5-pro-preview-06-05",
-    "Mistral Large (Mistral)": "litellm/mistral/mistral-large-latest",
-    "DeepSeek Chat (DeepSeek)": "litellm/deepseek/deepseek-chat",
+    "GPT-4o (OpenAI)": ("gpt-4o", "openai"),
+    "GPT-4.1 (OpenAI)": ("gpt-4.1", "openai"),
+    "Claude Sonnet 4 (Anthropic)": ("litellm/anthropic/claude-sonnet-4-20250514", "anthropic"),
+    "Claude Opus 4 (Anthropic)": ("litellm/anthropic/claude-opus-4-0-20250514", "anthropic"),
+    "Gemini 2.0 Flash (Google)": ("litellm/gemini/gemini-2.0-flash", "google"),
+    "Gemini 2.5 Pro (Google)": ("litellm/gemini/gemini-2.5-pro-preview-06-05", "google"),
+    "Mistral Large (Mistral)": ("litellm/mistral/mistral-large-latest", "mistral"),
+    "DeepSeek Chat (DeepSeek)": ("litellm/deepseek/deepseek-chat", "deepseek"),
+}
+
+# Map provider to env var name
+PROVIDER_KEY_MAP = {
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "google": "GEMINI_API_KEY",
+    "mistral": "MISTRAL_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
 }
 
 # ElevenLabs best voice
@@ -46,19 +55,27 @@ ngrok_tunnel = None
 current_mcp_url = None
 
 
-def get_elevenlabs_client() -> ElevenLabs | None:
-    """Get ElevenLabs client if API key is set."""
-    api_key = os.getenv("ELEVENLABS_API_KEY")
-    if api_key:
-        return ElevenLabs(api_key=api_key)
+def set_api_key(key_name: str, value: str) -> str:
+    """Set API key in environment."""
+    if value and value.strip():
+        os.environ[key_name] = value.strip()
+        return f"{key_name} set"
+    return ""
+
+
+def get_elevenlabs_client(api_key: str = None) -> ElevenLabs | None:
+    """Get ElevenLabs client."""
+    key = api_key or os.getenv("ELEVENLABS_API_KEY")
+    if key:
+        return ElevenLabs(api_key=key)
     return None
 
 
-def get_openai_client() -> OpenAI | None:
+def get_openai_client(api_key: str = None) -> OpenAI | None:
     """Get OpenAI client for Whisper STT."""
-    api_key = os.getenv("OPENAI_API_KEY")
-    if api_key:
-        return OpenAI(api_key=api_key)
+    key = api_key or os.getenv("OPENAI_API_KEY")
+    if key:
+        return OpenAI(api_key=key)
     return None
 
 
@@ -105,32 +122,41 @@ class ChatSession:
 chat_session: ChatSession | None = None
 
 
-def generate_ngrok_url() -> str:
+def generate_ngrok_url(ngrok_token: str) -> str:
     """Generate ngrok tunnel URL for MCP."""
     global ngrok_tunnel, current_mcp_url
 
+    # Set token if provided
+    if ngrok_token and ngrok_token.strip():
+        os.environ["NGROK_AUTH_TOKEN"] = ngrok_token.strip()
+
+    auth_token = os.getenv("NGROK_AUTH_TOKEN")
+    if not auth_token:
+        return "Error: Please enter your ngrok auth token first"
+
     # Kill existing tunnel if any
     if ngrok_tunnel:
-        ngrok.disconnect(ngrok_tunnel.public_url)
+        try:
+            ngrok.disconnect(ngrok_tunnel.public_url)
+        except Exception:
+            pass
 
-    # Get ngrok auth token from env
-    auth_token = os.getenv("NGROK_AUTH_TOKEN")
-    if auth_token:
+    try:
         ngrok.set_auth_token(auth_token)
+        # Create tunnel to FastAPI server (default port 8000)
+        port = int(os.getenv("PORT", "8000"))
+        ngrok_tunnel = ngrok.connect(port, "http")
+        current_mcp_url = f"{ngrok_tunnel.public_url}/mcp"
+        return current_mcp_url
+    except Exception as e:
+        return f"Error: {str(e)}"
 
-    # Create tunnel to FastAPI server (default port 8000)
-    port = int(os.getenv("PORT", "8000"))
-    ngrok_tunnel = ngrok.connect(port, "http")
-    current_mcp_url = f"{ngrok_tunnel.public_url}/mcp"
 
-    return f"MCP URL: {current_mcp_url}"
-
-
-def transcribe_audio(audio_path: str) -> str:
+def transcribe_audio(audio_path: str, openai_key: str = None) -> str:
     """Transcribe audio using Whisper."""
-    client = get_openai_client()
+    client = get_openai_client(openai_key)
     if not client:
-        return "[Error: OPENAI_API_KEY not set for transcription]"
+        return "[Error: OpenAI API key required for voice transcription]"
 
     with open(audio_path, "rb") as audio_file:
         transcription = client.audio.transcriptions.create(
@@ -140,9 +166,9 @@ def transcribe_audio(audio_path: str) -> str:
     return transcription.text
 
 
-def text_to_speech(text: str) -> str | None:
+def text_to_speech(text: str, elevenlabs_key: str = None) -> str | None:
     """Convert text to speech using ElevenLabs."""
-    client = get_elevenlabs_client()
+    client = get_elevenlabs_client(elevenlabs_key)
     if not client:
         return None
 
@@ -160,64 +186,19 @@ def text_to_speech(text: str) -> str | None:
         return f.name
 
 
-async def process_text_message(
-    message: str,
-    history: list,
-    model_choice: str,
-    voice_enabled: bool,
-) -> Generator:
-    """Process text message and optionally return audio."""
-    global chat_session
-
-    if not chat_session:
-        chat_session = ChatSession()
-
-    model_name = MODELS.get(model_choice, "gpt-4o")
-
-    # Get response from agent
-    response = await chat_session.chat(message, model_name)
-
-    # Generate audio if voice mode enabled
-    audio_path = None
-    if voice_enabled:
-        audio_path = text_to_speech(response)
-
-    yield response, audio_path
-
-
-async def process_voice_message(
-    audio_path: str,
-    history: list,
-    model_choice: str,
-) -> tuple[str, str, str | None]:
-    """Process voice input and return text response + audio."""
-    global chat_session
-
-    if not audio_path:
-        return "", "", None
-
-    if not chat_session:
-        chat_session = ChatSession()
-
-    # Transcribe audio
-    transcription = transcribe_audio(audio_path)
-
-    model_name = MODELS.get(model_choice, "gpt-4o")
-
-    # Get response from agent
-    response = await chat_session.chat(transcription, model_name)
-
-    # Generate audio response
-    audio_response = text_to_speech(response)
-
-    return transcription, response, audio_response
-
-
-def reset_session(model_choice: str) -> list:
-    """Reset chat session when model changes."""
+def reset_session() -> list:
+    """Reset chat session."""
     global chat_session
     chat_session = ChatSession()
     return []
+
+
+def get_required_key_for_model(model_choice: str) -> str:
+    """Get the required API key name for a model."""
+    if model_choice in MODELS:
+        _, provider = MODELS[model_choice]
+        return PROVIDER_KEY_MAP.get(provider, "")
+    return ""
 
 
 def build_ui() -> gr.Blocks:
@@ -229,6 +210,8 @@ def build_ui() -> gr.Blocks:
 
         with gr.Row():
             with gr.Column(scale=1):
+                gr.Markdown("### Configuration")
+
                 # Model selection
                 model_dropdown = gr.Dropdown(
                     choices=list(MODELS.keys()),
@@ -237,11 +220,68 @@ def build_ui() -> gr.Blocks:
                     interactive=True,
                 )
 
+                # Dynamic hint for required key
+                required_key_hint = gr.Markdown("*Requires: `OPENAI_API_KEY`*")
+
+                gr.Markdown("---")
+                gr.Markdown("### API Keys")
+                gr.Markdown("*Enter your keys below (stored in session only)*")
+
+                with gr.Accordion("LLM Provider Keys", open=True):
+                    openai_key = gr.Textbox(
+                        label="OpenAI API Key",
+                        type="password",
+                        placeholder="sk-...",
+                        value=os.getenv("OPENAI_API_KEY", ""),
+                    )
+                    anthropic_key = gr.Textbox(
+                        label="Anthropic API Key",
+                        type="password",
+                        placeholder="sk-ant-...",
+                        value=os.getenv("ANTHROPIC_API_KEY", ""),
+                    )
+                    google_key = gr.Textbox(
+                        label="Google Gemini API Key",
+                        type="password",
+                        placeholder="AI...",
+                        value=os.getenv("GEMINI_API_KEY", ""),
+                    )
+                    mistral_key = gr.Textbox(
+                        label="Mistral API Key",
+                        type="password",
+                        placeholder="...",
+                        value=os.getenv("MISTRAL_API_KEY", ""),
+                    )
+                    deepseek_key = gr.Textbox(
+                        label="DeepSeek API Key",
+                        type="password",
+                        placeholder="sk-...",
+                        value=os.getenv("DEEPSEEK_API_KEY", ""),
+                    )
+
+                with gr.Accordion("Voice & MCP Keys", open=True):
+                    elevenlabs_key = gr.Textbox(
+                        label="ElevenLabs API Key",
+                        type="password",
+                        placeholder="sk_...",
+                        value=os.getenv("ELEVENLABS_API_KEY", ""),
+                        info="Required for voice mode TTS",
+                    )
+                    ngrok_token = gr.Textbox(
+                        label="Ngrok Auth Token",
+                        type="password",
+                        placeholder="...",
+                        value=os.getenv("NGROK_AUTH_TOKEN", ""),
+                        info="Required for MCP URL generation",
+                    )
+
+                gr.Markdown("---")
+
                 # Ngrok URL generation
                 ngrok_btn = gr.Button("Generate MCP URL", variant="secondary")
                 ngrok_output = gr.Textbox(
                     label="MCP Endpoint",
-                    placeholder="Click button to generate ngrok URL",
+                    placeholder="Click button to generate",
                     interactive=False,
                 )
 
@@ -249,25 +289,14 @@ def build_ui() -> gr.Blocks:
                 voice_toggle = gr.Checkbox(
                     label="Enable Voice Mode",
                     value=False,
-                    info="Use ElevenLabs TTS for responses",
+                    info="ElevenLabs TTS + Whisper STT",
                 )
-
-                gr.Markdown("---")
-                gr.Markdown("### API Keys Required")
-                gr.Markdown("""
-                Set in `.env`:
-                - `OPENAI_API_KEY` - For OpenAI models & Whisper
-                - `ANTHROPIC_API_KEY` - For Claude models
-                - `GEMINI_API_KEY` - For Gemini models
-                - `ELEVENLABS_API_KEY` - For voice mode
-                - `NGROK_AUTH_TOKEN` - For MCP URL generation
-                """)
 
             with gr.Column(scale=2):
                 # Chat interface
                 chatbot = gr.Chatbot(
                     label="Chat",
-                    height=400,
+                    height=500,
                     type="messages",
                 )
 
@@ -289,22 +318,48 @@ def build_ui() -> gr.Blocks:
                 # Voice input
                 with gr.Row(visible=False) as voice_input_row:
                     audio_input = gr.Audio(
-                        label="Voice Input",
+                        label="Voice Input (click to record)",
                         sources=["microphone"],
                         type="filepath",
                     )
                     voice_send_btn = gr.Button("Send Voice", variant="primary")
 
         # Event handlers
-        ngrok_btn.click(
-            fn=generate_ngrok_url,
-            outputs=ngrok_output,
+
+        def update_required_key_hint(model_choice):
+            key_name = get_required_key_for_model(model_choice)
+            return f"*Requires: `{key_name}`*"
+
+        model_dropdown.change(
+            fn=update_required_key_hint,
+            inputs=[model_dropdown],
+            outputs=[required_key_hint],
         )
 
         model_dropdown.change(
             fn=reset_session,
-            inputs=[model_dropdown],
             outputs=[chatbot],
+        )
+
+        # Save keys to env when changed
+        def save_key(key_name):
+            def _save(value):
+                if value and value.strip():
+                    os.environ[key_name] = value.strip()
+            return _save
+
+        openai_key.change(fn=save_key("OPENAI_API_KEY"), inputs=[openai_key])
+        anthropic_key.change(fn=save_key("ANTHROPIC_API_KEY"), inputs=[anthropic_key])
+        google_key.change(fn=save_key("GEMINI_API_KEY"), inputs=[google_key])
+        mistral_key.change(fn=save_key("MISTRAL_API_KEY"), inputs=[mistral_key])
+        deepseek_key.change(fn=save_key("DEEPSEEK_API_KEY"), inputs=[deepseek_key])
+        elevenlabs_key.change(fn=save_key("ELEVENLABS_API_KEY"), inputs=[elevenlabs_key])
+        ngrok_token.change(fn=save_key("NGROK_AUTH_TOKEN"), inputs=[ngrok_token])
+
+        ngrok_btn.click(
+            fn=generate_ngrok_url,
+            inputs=[ngrok_token],
+            outputs=ngrok_output,
         )
 
         def toggle_voice_ui(enabled: bool):
@@ -319,7 +374,7 @@ def build_ui() -> gr.Blocks:
             outputs=[audio_output, voice_input_row],
         )
 
-        async def handle_text_submit(message, history, model_choice, voice_enabled):
+        async def handle_text_submit(message, history, model_choice, voice_enabled, el_key):
             if not message.strip():
                 return history, "", None
 
@@ -327,8 +382,12 @@ def build_ui() -> gr.Blocks:
             if not chat_session:
                 chat_session = ChatSession()
 
-            model_name = MODELS.get(model_choice, "gpt-4o")
-            response = await chat_session.chat(message, model_name)
+            model_name, _ = MODELS.get(model_choice, ("gpt-4o", "openai"))
+
+            try:
+                response = await chat_session.chat(message, model_name)
+            except Exception as e:
+                response = f"Error: {str(e)}"
 
             history = history + [
                 {"role": "user", "content": message},
@@ -336,41 +395,58 @@ def build_ui() -> gr.Blocks:
             ]
 
             audio_path = None
-            if voice_enabled:
-                audio_path = text_to_speech(response)
+            if voice_enabled and not response.startswith("Error:"):
+                audio_path = text_to_speech(response, el_key)
 
             return history, "", audio_path
 
         send_btn.click(
             fn=handle_text_submit,
-            inputs=[text_input, chatbot, model_dropdown, voice_toggle],
+            inputs=[text_input, chatbot, model_dropdown, voice_toggle, elevenlabs_key],
             outputs=[chatbot, text_input, audio_output],
         )
 
         text_input.submit(
             fn=handle_text_submit,
-            inputs=[text_input, chatbot, model_dropdown, voice_toggle],
+            inputs=[text_input, chatbot, model_dropdown, voice_toggle, elevenlabs_key],
             outputs=[chatbot, text_input, audio_output],
         )
 
-        async def handle_voice_submit(audio_path, history, model_choice):
+        async def handle_voice_submit(audio_path, history, model_choice, openai_key_val, el_key):
             if not audio_path:
                 return history, None
 
-            transcription, response, audio_response = await process_voice_message(
-                audio_path, history, model_choice
-            )
+            global chat_session
+            if not chat_session:
+                chat_session = ChatSession()
+
+            # Transcribe
+            transcription = transcribe_audio(audio_path, openai_key_val)
+            if transcription.startswith("[Error"):
+                history = history + [{"role": "assistant", "content": transcription}]
+                return history, None
+
+            model_name, _ = MODELS.get(model_choice, ("gpt-4o", "openai"))
+
+            try:
+                response = await chat_session.chat(transcription, model_name)
+            except Exception as e:
+                response = f"Error: {str(e)}"
 
             history = history + [
                 {"role": "user", "content": f"[Voice] {transcription}"},
                 {"role": "assistant", "content": response},
             ]
 
+            audio_response = None
+            if not response.startswith("Error:"):
+                audio_response = text_to_speech(response, el_key)
+
             return history, audio_response
 
         voice_send_btn.click(
             fn=handle_voice_submit,
-            inputs=[audio_input, chatbot, model_dropdown],
+            inputs=[audio_input, chatbot, model_dropdown, openai_key, elevenlabs_key],
             outputs=[chatbot, audio_output],
         )
 
